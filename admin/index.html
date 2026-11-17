@@ -138,7 +138,19 @@ h1,h2,h3,.kpi strong,.logo,.top strong{font-family:'Barlow Condensed',Impact,san
 <h1 style="margin:30px 0 5px">Acesso da equipe</h1><p class="muted">Entre para gerenciar o evento.</p>
 <div class="field"><label>E-mail</label><input autocomplete="username" id="user" type="email" placeholder="Seu e-mail cadastrado"/></div>
 <div class="field"><label>Senha</label><input autocomplete="current-password" id="pass" placeholder="Sua senha do Supabase" type="password"/></div>
-<button class="btn full" onclick="login()">Entrar no painel administrativo</button><p class="hint" id="err" style="color:#ff938c"></p>
+<button class="btn full" onclick="login()">Entrar no painel administrativo</button>
+<p class="hint" id="err" style="color:#ff938c"></p>
+<p style="text-align:center;margin:12px 0 4px"><a href="#" id="forgotPasswordLink" onclick="requestPasswordRecovery(event)" style="color:var(--yellow);font-weight:700;text-decoration:underline">Esqueceu sua senha? Recuperar acesso</a></p>
+<div id="passwordRecoveryBox" class="card" style="display:none;margin-top:16px;padding:16px">
+ <h3 style="margin:0 0 8px;color:var(--yellow)">Criar nova senha</h3>
+ <p class="hint">Digite uma nova senha para sua conta.</p>
+ <label for="newPassword">Nova senha</label>
+ <input id="newPassword" type="password" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" style="width:100%;padding:13px;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:4px;margin:6px 0 12px">
+ <label for="confirmNewPassword">Confirme a nova senha</label>
+ <input id="confirmNewPassword" type="password" autocomplete="new-password" placeholder="Digite novamente" style="width:100%;padding:13px;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:4px;margin:6px 0 12px">
+ <button class="btn full" type="button" onclick="saveRecoveredPassword()">Salvar nova senha</button>
+ <p id="recoveryMessage" class="hint" aria-live="polite"></p>
+</div>
 <p class="hint">Acesso protegido pelo Supabase. Entre com o e-mail e a senha cadastrados na autenticação do evento.</p>
 </div></div>
 <div id="app"><div class="layout"><aside class="side">
@@ -146,7 +158,7 @@ h1,h2,h3,.kpi strong,.logo,.top strong{font-family:'Barlow Condensed',Impact,san
 <nav class="nav" id="nav">
 <button class="active" data-page="overview">▦ Visão geral</button><button data-page="people">♙ Participantes</button><button data-page="gate">⌑ Entrada / QR Code</button><button data-page="finance">R$ Financeiro</button><button data-page="sponsors">☆ Patrocinadores</button><button data-page="settings">⚙ Configurações</button><button data-page="users">♙ Usuários e permissões</button>
 </nav><div class="side-foot">CHOPPTROP Kerb Fest<br/>06 de fevereiro de 2027<br/><span style="color:var(--yellow)">Ambiente de demonstração</span></div></aside>
-<div class="main"><header class="top"><div class="top-left"><button type="button" class="btn ghost home-return" onclick="showAdminHome()">⌂ Início</button><strong id="crumb">VISÃO GERAL</strong></div><div><span class="muted">Administrador</span>   <button class="btn ghost" onclick="logout()">Sair</button></div></header><main class="content">
+<div class="main"><header class="top"><div class="top-left"><button type="button" class="btn ghost home-return" onclick="showAdminHome()">⌂ Início</button><strong id="crumb">VISÃO GERAL</strong></div><div><span class="muted">Administrador</span>   <button class="btn ghost" onclick="logout()">Sair</button></div></header><main class="content">
 <section class="page" id="overview"><div class="pagehead"><div><h1>Visão geral</h1><div class="muted">Resumo operacional do CHOPPTROP Kerb Fest</div></div><span class="tag">06/02/2027 · Arabutã/SC</span></div>
 <div class="grid"><div class="card kpi"><span>Participantes confirmados</span><strong id="kPeople">128</strong><em>Meta de planejamento: 300</em></div><div class="card kpi"><span>Faturamento confirmado</span><strong>R$ 28.640</strong><em>Valores ilustrativos</em></div><div class="card kpi"><span>Ingressos disponíveis no lote</span><strong>22</strong><em>Lote 1 · até 150 pessoas</em></div><div class="card kpi"><span>Entradas registradas</span><strong id="kCheck">0</strong><em>Check-ins de demonstração</em></div></div>
 <div class="section">
@@ -213,6 +225,66 @@ let chopAuthUser = null;
 
 let checked=0;
 let chopCurrentAdminUser=null;
+
+async function requestPasswordRecovery(event){
+ if(event) event.preventDefault();
+ const email=document.getElementById('user').value.trim().toLowerCase();
+ const err=document.getElementById('err');
+ err.textContent='';
+ if(!email){err.textContent='Digite seu e-mail no campo acima para receber o link de recuperação.';document.getElementById('user').focus();return}
+ const link=document.getElementById('forgotPasswordLink');
+ if(link){link.style.pointerEvents='none';link.textContent='Enviando link...'}
+ try{
+  const redirectTo=window.location.origin+window.location.pathname;
+  const {error}=await chopSupabase.auth.resetPasswordForEmail(email,{redirectTo});
+  if(error) throw error;
+  err.style.color='#9be7a5';
+  err.textContent='Se esse e-mail estiver cadastrado, você receberá uma mensagem com o link para criar uma nova senha. Confira também o spam.';
+ }catch(e){
+  err.style.color='#ff938c';
+  err.textContent=e?.message||'Não foi possível solicitar a recuperação agora. Tente novamente.';
+ }finally{
+  if(link){link.style.pointerEvents='';link.textContent='Esqueceu sua senha? Recuperar acesso'}
+ }
+}
+
+async function saveRecoveredPassword(){
+ const password=document.getElementById('newPassword').value;
+ const confirm=document.getElementById('confirmNewPassword').value;
+ const message=document.getElementById('recoveryMessage');
+ message.style.color='#ff938c';message.textContent='';
+ if(password.length<8){message.textContent='A senha precisa ter pelo menos 8 caracteres.';return}
+ if(password!==confirm){message.textContent='As senhas não conferem.';return}
+ const button=document.querySelector('#passwordRecoveryBox button');
+ if(button){button.disabled=true;button.textContent='Salvando...'}
+ try{
+  const {error}=await chopSupabase.auth.updateUser({password});
+  if(error) throw error;
+  message.style.color='#9be7a5';
+  message.textContent='Senha alterada com sucesso! Agora você pode entrar com sua nova senha.';
+  document.getElementById('newPassword').value='';
+  document.getElementById('confirmNewPassword').value='';
+  document.getElementById('passwordRecoveryBox').style.display='none';
+  document.getElementById('err').style.color='#9be7a5';
+  document.getElementById('err').textContent='Senha atualizada. Faça login com a nova senha.';
+  try{await chopSupabase.auth.signOut()}catch(_){}
+ }catch(e){message.textContent=e?.message||'Não foi possível atualizar a senha. Solicite um novo link.'}
+ finally{if(button){button.disabled=false;button.textContent='Salvar nova senha'}}
+}
+
+chopSupabase.auth.onAuthStateChange((event)=>{
+ if(event==='PASSWORD_RECOVERY'){
+  const box=document.getElementById('passwordRecoveryBox');
+  const err=document.getElementById('err');
+  if(box) box.style.display='block';
+  if(err){err.style.color='#9be7a5';err.textContent='Link validado. Defina sua nova senha abaixo.'}
+  const loginScreen=document.getElementById('loginScreen');
+  if(loginScreen) loginScreen.style.display='grid';
+  const app=document.getElementById('app');
+  if(app) app.style.display='none';
+ }
+});
+
 async function login(){
  const email=document.getElementById('user').value.trim().toLowerCase();
  const password=document.getElementById('pass').value;
@@ -270,6 +342,7 @@ function enterAdminApp(){
  document.getElementById('loginScreen').style.display='none';document.getElementById('app').style.display='block';document.getElementById('err').textContent='';
  document.querySelector('.top .muted').textContent=(chopCurrentAdminUser?.name||'Equipe')+' · '+(chopCurrentAdminUser?.role||'Usuário');
  applyAdminPermissions();
+ loadTicketPricingFromSupabase();
  const first=(chopCurrentAdminUser?.permissions||[]).find(id=>document.getElementById(id));
  if(first){const b=document.querySelector('#nav button[data-page="'+first+'"]');if(b)b.click();}
 }
@@ -498,7 +571,7 @@ function loadAdminShirtModel(){try{const img=localStorage.getItem('chopptrop_shi
 function loadEventPreferences(){let c={};try{c=JSON.parse(localStorage.getItem('chopptrop_event_preferences')||'{}')}catch(e){};const w=document.getElementById('eventWhatsapp'),m=document.getElementById('eventEmail');if(w)w.value=c.whatsapp||'';if(m)m.value=c.email||'contatochopptrop@gmail.com'}
 function saveEventPreferences(){const whatsapp=document.getElementById('eventWhatsapp').value.trim(),email=document.getElementById('eventEmail').value.trim(),digits=whatsapp.replace(/\D/g,'');const msg=document.getElementById('eventPreferencesMsg');if(whatsapp&&digits.length<10){msg.textContent='Informe o DDD e o número completo do WhatsApp.';return}try{localStorage.setItem('chopptrop_event_preferences',JSON.stringify({whatsapp,email,updatedAt:new Date().toISOString()}));msg.textContent='Preferências salvas. O botão de WhatsApp aparecerá no site público quando estiver publicado no mesmo domínio.'}catch(e){msg.textContent='Não foi possível salvar neste navegador.'}}
 
-function initAdmin(){bindAdminNav();renderAdminUsers();renderExpenses();document.getElementById('shirtModelFile')?.addEventListener('change',previewShirtModel);loadAdminShirtModel();loadLotCapacity();loadTicketPricing();loadEventPreferences();}
+function initAdmin(){bindAdminNav();renderAdminUsers();renderExpenses();document.getElementById('shirtModelFile')?.addEventListener('change',previewShirtModel);loadAdminShirtModel();loadLotCapacity();loadEventPreferences();}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initAdmin,{once:true})}else{initAdmin()}
 restoreChopptropSession();
 const DEFAULT_TICKET_CONFIG={activeLot:0,prices:{Masculino:[235,245,255],Feminino:[215,225,235],Casal:[430,440,450]}};
@@ -509,8 +582,74 @@ function updateLotCapacityTotal(){const total=[...document.querySelectorAll('.lo
 function saveLotCapacity(){const count=Number(document.getElementById('lotCount').value),quantities=[];for(let i=0;i<count;i++){const v=Number(document.getElementById('lotCapacity'+i)?.value);if(!Number.isInteger(v)||v<1){document.getElementById('lotCapacityMsg').textContent='Informe pelo menos 1 ingresso inteiro para cada lote.';return}quantities.push(v)}const cfg={count,quantities,total:quantities.reduce((a,b)=>a+b,0),updatedAt:new Date().toISOString()};try{localStorage.setItem('chopptrop_lot_capacity',JSON.stringify(cfg));document.getElementById('lotCapacityMsg').textContent=`Configuração salva neste navegador: ${count} lote(s), ${cfg.total} ingressos liberados no planejamento.`;updateManualLotOptions(count)}catch(e){document.getElementById('lotCapacityMsg').textContent='Não foi possível salvar neste navegador.'}}
 function updateManualLotOptions(count){const sel=document.getElementById('manualLot');if(!sel)return;const old=Number(sel.value)||0;sel.innerHTML=Array.from({length:count},(_,i)=>`<option value="${i}">${i+1}º Lote</option>`).join('');sel.value=String(Math.min(old,count-1))}
 function loadLotCapacity(){const cfg=getLotCapacity(),count=Math.min(3,Math.max(1,Number(cfg.count)||3));document.getElementById('lotCount').value=String(count);renderLotCapacityFields();document.querySelectorAll('.lot-capacity-input').forEach(el=>el.addEventListener('input',updateLotCapacityTotal));updateManualLotOptions(count)}
-function loadTicketPricing(){let c=DEFAULT_TICKET_CONFIG;try{c=JSON.parse(localStorage.getItem('chopptrop_ticket_config'))||DEFAULT_TICKET_CONFIG}catch(e){};document.getElementById('manualLot').value=String(c.activeLot??0);[['M','Masculino'],['F','Feminino'],['C','Casal']].forEach(([k,n])=>(c.prices?.[n]||DEFAULT_TICKET_CONFIG.prices[n]).forEach((v,i)=>{const el=document.getElementById('price'+k+i);if(el)el.value=v}));}
-function saveTicketPricing(){const activeLot=Number(document.getElementById('manualLot').value),prices={Masculino:[],Feminino:[],Casal:[]};for(const [k,n] of [['M','Masculino'],['F','Feminino'],['C','Casal']]){for(let i=0;i<3;i++){const v=Number(document.getElementById('price'+k+i).value);if(!Number.isFinite(v)||v<=0){document.getElementById('pricingMsg').textContent='Preencha todos os preços com valores maiores que zero.';return}prices[n].push(v)}}const config={activeLot,prices,updatedAt:new Date().toISOString()};try{localStorage.setItem('chopptrop_ticket_config',JSON.stringify(config));document.getElementById('pricingMsg').textContent='Preços e lote salvos. O site público atualizado no mesmo domínio exibirá esses valores.';['priceM','priceF','priceC'].forEach((id,i)=>{const key=['Masculino','Feminino','Casal'][i];document.getElementById(id).textContent=money(prices[key][activeLot])});document.getElementById('lotLabel').textContent=['1º Lote','2º Lote','3º Lote'][activeLot]+' · definido manualmente'}catch(e){document.getElementById('pricingMsg').textContent='Não foi possível salvar neste navegador.'}}
+async function loadTicketPricingFromSupabase(){
+ const msg=document.getElementById('pricingMsg');
+ if(!chopAuthUser){if(msg)msg.textContent='Entre com seu usuário para carregar os preços do banco.';return}
+ if(msg)msg.textContent='Carregando preços do Supabase...';
+ try{
+  const [{data:types,error:typeError},{data:lots,error:lotError},{data:settings,error:settingsError}]=await Promise.all([
+   chopSupabase.from('ticket_types').select('id,category').eq('active',true),
+   chopSupabase.from('ticket_lots').select('ticket_type_id,lot_number,price_cents,active').eq('active',true),
+   chopSupabase.from('event_settings').select('public_active_lot').eq('id',true).maybeSingle()
+  ]);
+  if(typeError)throw typeError;if(lotError)throw lotError;if(settingsError)throw settingsError;
+  const categoryMap={masculino:'M',feminino:'F',casal:'C'};
+  const grouped={M:[],F:[],C:[]};
+  for(const type of (types||[])){
+   const key=categoryMap[String(type.category||'').toLowerCase()];if(!key)continue;
+   for(const lot of (lots||[]).filter(x=>x.ticket_type_id===type.id).sort((a,b)=>a.lot_number-b.lot_number)){
+    grouped[key][Number(lot.lot_number)-1]=Number(lot.price_cents)/100;
+   }
+  }
+  const names={M:'Masculino',F:'Feminino',C:'Casal'};
+  for(const key of ['M','F','C']){
+   const vals=grouped[key];if(vals.length<3||vals.slice(0,3).some(v=>!Number.isFinite(v)||v<=0))throw new Error('Não encontrei os três lotes ativos para '+names[key]+'.');
+   vals.slice(0,3).forEach((v,i)=>{const el=document.getElementById('price'+key+i);if(el)el.value=v.toFixed(2)});
+  }
+  const activeLot=Math.max(0,Math.min(2,Number(settings?.public_active_lot??0)));
+  const manual=document.getElementById('manualLot');if(manual)manual.value=String(activeLot);
+  if(msg)msg.textContent='Preços carregados do banco de dados. Última leitura concluída com sucesso.';
+ }catch(e){
+  if(msg)msg.textContent='Não foi possível carregar os preços do Supabase: '+(e?.message||'verifique a conexão e as permissões.');
+ }
+}
+async function saveTicketPricing(){
+ const msg=document.getElementById('pricingMsg');
+ if(!chopAuthUser){msg.textContent='Sua sessão não está ativa. Entre novamente para salvar.';return}
+ const activeLot=Number(document.getElementById('manualLot').value),prices={Masculino:[],Feminino:[],Casal:[]};
+ for(const [k,n] of [['M','Masculino'],['F','Feminino'],['C','Casal']]){
+  for(let i=0;i<3;i++){
+   const v=Number(document.getElementById('price'+k+i).value);
+   if(!Number.isFinite(v)||v<=0){msg.textContent='Preencha todos os preços com valores maiores que zero.';return}
+   prices[n].push(v);
+  }
+ }
+ if(!Number.isInteger(activeLot)||activeLot<0||activeLot>2){msg.textContent='Selecione um lote válido.';return}
+ const button=document.querySelector('#settings button[onclick="saveTicketPricing()"]');
+ if(button){button.disabled=true;button.textContent='SALVANDO...'}
+ msg.textContent='Gravando os preços no Supabase...';
+ try{
+  const {data:types,error:typeError}=await chopSupabase.from('ticket_types').select('id,category').eq('active',true);
+  if(typeError)throw typeError;
+  const byCategory={};for(const t of (types||[]))byCategory[String(t.category||'').toLowerCase()]=t.id;
+  const categoryKeys={Masculino:'masculino',Feminino:'feminino',Casal:'casal'};
+  for(const name of ['Masculino','Feminino','Casal']){
+   const typeId=byCategory[categoryKeys[name]];if(!typeId)throw new Error('Modalidade não encontrada no banco: '+name);
+   for(let i=0;i<3;i++){
+    const {data,error}=await chopSupabase.from('ticket_lots').update({price_cents:Math.round(prices[name][i]*100)}).eq('ticket_type_id',typeId).eq('lot_number',i+1).select('id');
+    if(error)throw error;if(!data||data.length!==1)throw new Error('Não foi possível atualizar o '+(i+1)+'º lote de '+name+'. Confira as permissões e o cadastro do lote.');
+   }
+  }
+  const {data:settingRows,error:settingError}=await chopSupabase.from('event_settings').update({public_active_lot:activeLot}).eq('id',true).select('id');
+  if(settingError)throw settingError;
+  if(!settingRows||settingRows.length!==1)throw new Error('Os preços foram atualizados, mas não encontrei a configuração principal do evento (id = true) para salvar o lote anunciado.');
+  const config={activeLot,prices,updatedAt:new Date().toISOString()};
+  try{localStorage.setItem('chopptrop_ticket_config',JSON.stringify(config))}catch(_){}
+  msg.textContent='Preços e lote gravados no Supabase com sucesso. O site público poderá consultar os novos valores após receber a atualização correspondente.';
+ }catch(e){
+  msg.textContent='Falha ao salvar no Supabase: '+(e?.message||'erro desconhecido');
+ }finally{if(button){button.disabled=false;button.textContent='SALVAR PREÇOS E LOTE'}}
+}
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('loginScreen')?.style.display!=='none'&&document.activeElement?.id==='pass'){login()}});
