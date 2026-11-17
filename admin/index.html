@@ -222,8 +222,9 @@ const SUPABASE_URL = 'https://cmbfzkydqyqmoeaplmde.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_2HddSkUtQU621mPacB_u8w_GiA9Womc';
 const chopSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let chopAuthUser = null;
-// Impede que a sessão temporária do link de recuperação abra o painel antes da troca da senha.
-let chopPasswordRecoveryMode = /(?:^|[&#])type=recovery(?:&|$)/i.test(window.location.hash || '') || /[?&]type=recovery(?:&|$)/i.test(window.location.search || '');
+// O link do Supabase pode chegar em PKCE (?code=...) ou no formato de tokens (#access_token=...).
+let chopPasswordRecoveryMode = false;
+let chopRecoveryReady = false;
 
 let checked=0;
 let chopCurrentAdminUser=null;
@@ -260,6 +261,12 @@ async function saveRecoveredPassword(){
  const button=document.querySelector('#passwordRecoveryBox button');
  if(button){button.disabled=true;button.textContent='Salvando...'}
  try{
+  if(!chopRecoveryReady){
+   const {data:sessionData,error:sessionError}=await chopSupabase.auth.getSession();
+   if(sessionError) throw sessionError;
+   if(!sessionData?.session) throw new Error('O link ainda não validou sua sessão. Solicite um novo link de recuperação e abra-o novamente.');
+   chopRecoveryReady=true;
+  }
   const {error}=await chopSupabase.auth.updateUser({password});
   if(error) throw error;
   message.style.color='#9be7a5';
@@ -287,6 +294,52 @@ chopSupabase.auth.onAuthStateChange((event)=>{
   if(app) app.style.display='none';
  }
 });
+
+function showPasswordRecoveryForm(){
+ chopPasswordRecoveryMode=true;
+ const box=document.getElementById('passwordRecoveryBox');
+ const err=document.getElementById('err');
+ if(box) box.style.display='block';
+ if(err){err.style.color='#9be7a5';err.textContent='Link validado. Defina sua nova senha abaixo.'}
+ const loginScreen=document.getElementById('loginScreen');
+ if(loginScreen) loginScreen.style.display='grid';
+ const app=document.getElementById('app');
+ if(app) app.style.display='none';
+}
+
+async function initializeAdminAuth(){
+ const params=new URLSearchParams(window.location.search);
+ const hashParams=new URLSearchParams((window.location.hash||'').replace(/^#/,''));
+ const code=params.get('code');
+ const accessToken=hashParams.get('access_token');
+ const refreshToken=hashParams.get('refresh_token');
+ const isRecovery=params.get('type')==='recovery'||hashParams.get('type')==='recovery';
+ try{
+  // PKCE: troca o código do link por uma sessão válida antes de permitir salvar a senha.
+  if(code){
+   const {data,error}=await chopSupabase.auth.exchangeCodeForSession(code);
+   if(error) throw error;
+   if(isRecovery || data?.user){
+    chopRecoveryReady=true;
+    showPasswordRecoveryForm();
+    return;
+   }
+  }
+  // Fluxo legado/implicit: estabelece a sessão usando os tokens do fragmento.
+  if(accessToken&&refreshToken){
+   const {data,error}=await chopSupabase.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
+   if(error) throw error;
+   if(isRecovery){chopRecoveryReady=true;showPasswordRecoveryForm();return;}
+  }
+  const {data,error}=await chopSupabase.auth.getSession();
+  if(error) throw error;
+  if(isRecovery && data?.session){chopRecoveryReady=true;showPasswordRecoveryForm();return;}
+  if(data?.session?.user) await loadChopptropProfile(data.session.user);
+ }catch(e){
+  const err=document.getElementById('err');
+  if(err){err.style.color='#ff938c';err.textContent='Não foi possível validar o link de recuperação. Solicite um novo link e abra-o no mesmo navegador. '+(e?.message||'');}
+ }
+}
 
 async function login(){
  const email=document.getElementById('user').value.trim().toLowerCase();
@@ -580,7 +633,7 @@ function saveEventPreferences(){const whatsapp=document.getElementById('eventWha
 
 function initAdmin(){bindAdminNav();renderAdminUsers();renderExpenses();document.getElementById('shirtModelFile')?.addEventListener('change',previewShirtModel);loadAdminShirtModel();loadLotCapacity();loadEventPreferences();}
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initAdmin,{once:true})}else{initAdmin()}
-restoreChopptropSession();
+initializeAdminAuth();
 const DEFAULT_TICKET_CONFIG={activeLot:0,prices:{Masculino:[235,245,255],Feminino:[215,225,235],Casal:[430,440,450]}};
 const DEFAULT_LOT_CAPACITY={count:3,quantities:[150,75,75]};
 function getLotCapacity(){try{return JSON.parse(localStorage.getItem('chopptrop_lot_capacity'))||DEFAULT_LOT_CAPACITY}catch(e){return DEFAULT_LOT_CAPACITY}}
