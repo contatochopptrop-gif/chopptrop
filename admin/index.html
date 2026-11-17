@@ -158,7 +158,7 @@ h1,h2,h3,.kpi strong,.logo,.top strong{font-family:'Barlow Condensed',Impact,san
 <nav class="nav" id="nav">
 <button class="active" data-page="overview">▦ Visão geral</button><button data-page="people">♙ Participantes</button><button data-page="gate">⌑ Entrada / QR Code</button><button data-page="finance">R$ Financeiro</button><button data-page="sponsors">☆ Patrocinadores</button><button data-page="settings">⚙ Configurações</button><button data-page="users">♙ Usuários e permissões</button>
 </nav><div class="side-foot">CHOPPTROP Kerb Fest<br/>06 de fevereiro de 2027<br/><span style="color:var(--yellow)">Ambiente de demonstração</span></div></aside>
-<div class="main"><header class="top"><div class="top-left"><button type="button" class="btn ghost home-return" onclick="showAdminHome()">⌂ Início</button><strong id="crumb">VISÃO GERAL</strong></div><div><span class="muted">Administrador</span>   <button class="btn ghost" onclick="logout()">Sair</button></div></header><main class="content">
+<div class="main"><header class="top"><div class="top-left"><button type="button" class="btn ghost home-return" onclick="showAdminHome()">⌂ Início</button><strong id="crumb">VISÃO GERAL</strong></div><div><span class="muted">Administrador</span>   <button class="btn ghost" onclick="logout()">Sair</button></div></header><main class="content">
 <section class="page" id="overview"><div class="pagehead"><div><h1>Visão geral</h1><div class="muted">Resumo operacional do CHOPPTROP Kerb Fest</div></div><span class="tag">06/02/2027 · Arabutã/SC</span></div>
 <div class="grid"><div class="card kpi"><span>Participantes confirmados</span><strong id="kPeople">128</strong><em>Meta de planejamento: 300</em></div><div class="card kpi"><span>Faturamento confirmado</span><strong>R$ 28.640</strong><em>Valores ilustrativos</em></div><div class="card kpi"><span>Ingressos disponíveis no lote</span><strong>22</strong><em>Lote 1 · até 150 pessoas</em></div><div class="card kpi"><span>Entradas registradas</span><strong id="kCheck">0</strong><em>Check-ins de demonstração</em></div></div>
 <div class="section">
@@ -222,6 +222,8 @@ const SUPABASE_URL = 'https://cmbfzkydqyqmoeaplmde.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_2HddSkUtQU621mPacB_u8w_GiA9Womc';
 const chopSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let chopAuthUser = null;
+// Impede que a sessão temporária do link de recuperação abra o painel antes da troca da senha.
+let chopPasswordRecoveryMode = /(?:^|[&#])type=recovery(?:&|$)/i.test(window.location.hash || '') || /[?&]type=recovery(?:&|$)/i.test(window.location.search || '');
 
 let checked=0;
 let chopCurrentAdminUser=null;
@@ -274,6 +276,7 @@ async function saveRecoveredPassword(){
 
 chopSupabase.auth.onAuthStateChange((event)=>{
  if(event==='PASSWORD_RECOVERY'){
+  chopPasswordRecoveryMode=true;
   const box=document.getElementById('passwordRecoveryBox');
   const err=document.getElementById('err');
   if(box) box.style.display='block';
@@ -330,9 +333,13 @@ async function loadChopptropProfile(authUser){
  enterAdminApp();
 }
 async function restoreChopptropSession(){
+ // O Supabase cria uma sessão temporária ao validar o link. Durante recuperação,
+ // essa sessão serve apenas para updateUser({password}) e nunca deve abrir o dashboard.
+ if(chopPasswordRecoveryMode) return;
  try{
   const {data,error}=await chopSupabase.auth.getSession();
   if(error) throw error;
+  if(chopPasswordRecoveryMode) return;
   if(data?.session?.user) await loadChopptropProfile(data.session.user);
  }catch(e){
   const err=document.getElementById('err'); if(err) err.textContent=e?.message||'Não foi possível restaurar a sessão.';
