@@ -647,28 +647,28 @@ async function loadTicketPricingFromSupabase(){
  if(!chopAuthUser){if(msg)msg.textContent='Entre com seu usuário para carregar os preços do banco.';return}
  if(msg)msg.textContent='Carregando preços do Supabase...';
  try{
-  const [{data:types,error:typeError},{data:lots,error:lotError},{data:settings,error:settingsError}]=await Promise.all([
-   chopSupabase.from('ticket_types').select('id,category').eq('active',true),
-   chopSupabase.from('ticket_lots').select('ticket_type_id,lot_number,price_cents,active').eq('active',true),
-   chopSupabase.from('event_settings').select('public_active_lot').eq('id',true).maybeSingle()
+  const [{data:types,error:typeError},{data:lots,error:lotError}]=await Promise.all([
+   chopSupabase.from('ticket_types').select('id,code,name,active').eq('active',true),
+   chopSupabase.from('ticket_lots').select('ticket_type_id,lot_number,price_cents,active').eq('active',true)
   ]);
-  if(typeError)throw typeError;if(lotError)throw lotError;if(settingsError)throw settingsError;
-  const categoryMap={masculino:'M',feminino:'F',casal:'C'};
+  if(typeError)throw typeError;if(lotError)throw lotError;
+  const codeMap={MASC:'M',FEM:'F',CASAL:'C'};
   const grouped={M:[],F:[],C:[]};
   for(const type of (types||[])){
-   const key=categoryMap[String(type.category||'').toLowerCase()];if(!key)continue;
+   const key=codeMap[String(type.code||'').toUpperCase()];if(!key)continue;
    for(const lot of (lots||[]).filter(x=>x.ticket_type_id===type.id).sort((a,b)=>a.lot_number-b.lot_number)){
     grouped[key][Number(lot.lot_number)-1]=Number(lot.price_cents)/100;
    }
   }
   const names={M:'Masculino',F:'Feminino',C:'Casal'};
   for(const key of ['M','F','C']){
-   const vals=grouped[key];if(vals.length<3||vals.slice(0,3).some(v=>!Number.isFinite(v)||v<=0))throw new Error('Não encontrei os três lotes ativos para '+names[key]+'.');
+   const vals=grouped[key];
+   if(vals.length<3||[0,1,2].some(i=>!Number.isFinite(vals[i])||vals[i]<=0))throw new Error('Não encontrei os três lotes ativos para '+names[key]+'.');
    vals.slice(0,3).forEach((v,i)=>{const el=document.getElementById('price'+key+i);if(el)el.value=v.toFixed(2)});
   }
-  const activeLot=Math.max(0,Math.min(2,Number(settings?.public_active_lot??0)));
-  const manual=document.getElementById('manualLot');if(manual)manual.value=String(activeLot);
-  if(msg)msg.textContent='Preços carregados do banco de dados. Última leitura concluída com sucesso.';
+  const saved=(()=>{try{return JSON.parse(localStorage.getItem('chopptrop_ticket_config')||'{}')}catch(_){return {}}})();
+  const manual=document.getElementById('manualLot');if(manual)manual.value=String(Math.max(0,Math.min(2,Number(saved.activeLot)||0)));
+  if(msg)msg.textContent='Preços carregados do Supabase com sucesso. O lote selecionado é uma preferência local do painel; a virada automática ainda será ligada à contagem de participantes pagos.';
  }catch(e){
   if(msg)msg.textContent='Não foi possível carregar os preços do Supabase: '+(e?.message||'verifique a conexão e as permissões.');
  }
@@ -689,27 +689,31 @@ async function saveTicketPricing(){
  if(button){button.disabled=true;button.textContent='SALVANDO...'}
  msg.textContent='Gravando os preços no Supabase...';
  try{
-  const {data:types,error:typeError}=await chopSupabase.from('ticket_types').select('id,category').eq('active',true);
+  const {data:types,error:typeError}=await chopSupabase.from('ticket_types').select('id,code,active').eq('active',true);
   if(typeError)throw typeError;
-  const byCategory={};for(const t of (types||[]))byCategory[String(t.category||'').toLowerCase()]=t.id;
-  const categoryKeys={Masculino:'masculino',Feminino:'feminino',Casal:'casal'};
+  const byCode={};for(const t of (types||[]))byCode[String(t.code||'').toUpperCase()]=t.id;
+  const codeKeys={Masculino:'MASC',Feminino:'FEM',Casal:'CASAL'};
+  const updates=[];
   for(const name of ['Masculino','Feminino','Casal']){
-   const typeId=byCategory[categoryKeys[name]];if(!typeId)throw new Error('Modalidade não encontrada no banco: '+name);
-   for(let i=0;i<3;i++){
-    const {data,error}=await chopSupabase.from('ticket_lots').update({price_cents:Math.round(prices[name][i]*100)}).eq('ticket_type_id',typeId).eq('lot_number',i+1).select('id');
-    if(error)throw error;if(!data||data.length!==1)throw new Error('Não foi possível atualizar o '+(i+1)+'º lote de '+name+'. Confira as permissões e o cadastro do lote.');
-   }
+   const typeId=byCode[codeKeys[name]];if(!typeId)throw new Error('Modalidade não encontrada no banco pelo código '+codeKeys[name]+'.');
+   for(let i=0;i<3;i++)updates.push({name,lot:i+1,typeId,cents:Math.round(prices[name][i]*100)});
   }
-  const {data:settingRows,error:settingError}=await chopSupabase.from('event_settings').update({public_active_lot:activeLot}).eq('id',true).select('id');
-  if(settingError)throw settingError;
-  if(!settingRows||settingRows.length!==1)throw new Error('Os preços foram atualizados, mas não encontrei a configuração principal do evento (id = true) para salvar o lote anunciado.');
+  // Confere os nove registros antes de começar a gravar, evitando atualizações parciais por lote ausente.
+  const {data:existing,error:existingError}=await chopSupabase.from('ticket_lots').select('id,ticket_type_id,lot_number').in('ticket_type_id',updates.map(x=>x.typeId));
+  if(existingError)throw existingError;
+  for(const item of updates){const matches=(existing||[]).filter(x=>x.ticket_type_id===item.typeId&&Number(x.lot_number)===item.lot);if(matches.length!==1)throw new Error('Esperava exatamente um registro para o '+item.lot+'º lote de '+item.name+', mas encontrei '+matches.length+'. Nenhum preço foi alterado.');}
+  for(const item of updates){
+   const {data,error}=await chopSupabase.from('ticket_lots').update({price_cents:item.cents}).eq('ticket_type_id',item.typeId).eq('lot_number',item.lot).select('id');
+   if(error)throw error;if(!data||data.length!==1)throw new Error('Falha ao confirmar a gravação do '+item.lot+'º lote de '+item.name+'.');
+  }
   const config={activeLot,prices,updatedAt:new Date().toISOString()};
   try{localStorage.setItem('chopptrop_ticket_config',JSON.stringify(config))}catch(_){}
-  msg.textContent='Preços e lote gravados no Supabase com sucesso. O site público poderá consultar os novos valores após receber a atualização correspondente.';
+  msg.textContent='Preços gravados no Supabase. O lote selecionado ficou salvo neste navegador; a seleção automática do lote público ainda depende da contagem de participantes pagos.';
  }catch(e){
-  msg.textContent='Falha ao salvar no Supabase: '+(e?.message||'erro desconhecido');
+  msg.textContent='Falha ao salvar no Supabase: '+(e?.message||'erro desconhecido')+'. Confira os preços no banco antes de tentar novamente.';
  }finally{if(button){button.disabled=false;button.textContent='SALVAR PREÇOS E LOTE'}}
 }
+
 function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&document.getElementById('loginScreen')?.style.display!=='none'&&document.activeElement?.id==='pass'){login()}});
